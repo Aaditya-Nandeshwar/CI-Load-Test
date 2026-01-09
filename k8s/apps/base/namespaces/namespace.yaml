@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: intentionally-broken-name # The 'namespace:' field in kustomization.yaml will override this name

@@ -1,0 +1,19 @@
+# label-prefix-transformer.yaml
+apiVersion: builtin
+kind: PrefixSuffixTransformer
+metadata:
+  name: custom-label-prefixer
+prefix: "foo-" # Replace with your desired prefix
+fieldSpecs:
+  - path: metadata/name
+    create: true
+  # Optional: Also update label selectors for Services and Deployments
+  - path: spec/selector/app
+    kind: Service
+    create: true
+  - path: spec/selector/matchLabels/app
+    kind: Deployment
+    create: true
+  - path: spec/template/metadata/labels/app
+    kind: Deployment
+    create: true
