@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# This field tells Kustomize to apply these comman labels
+labels:
+- includeSelectors: true
+  pairs:
+    env: dev
+
+#Reference to base folder
+resources:
+- ../../../../../base/deployments
+
+# This field tells Kustomize to apply this namespace to all resources
+namespace: dev
+
+patches:
+#JSON 6902 Patching
+- patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/args/0
+      value: "-text=bar"
+  target:
+    kind: Deployment
+    name: echo
+    
+#Stragetic Merge Patching
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: echo
+    spec:
+      replicas: 3
+
+# Add customize prefix to your deployment & services
+transformers:
+- bar-label-prefix-transformer.yaml

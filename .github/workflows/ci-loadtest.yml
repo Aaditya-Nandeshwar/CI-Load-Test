@@ -1,0 +1,106 @@
+name: Automated Load Test(k6)
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  DEPLOY: 'dev'
+  TARGET_URL: "http://localhost:8080"
+  THINK_TIME: "1"
+  TEST_TYPE: "smoke" # smoke, avg_load, stress, spike, soak - case sensitive
+  
+jobs:
+  k6-load-test-report-generation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup K6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Install KinD, kustomize, kubectl & k6
+        run: |      
+          # Download kind binary
+          curl -Lo ./kind-binary https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x ./kind-binary
+          sudo mv ./kind-binary /usr/local/bin/kind
+
+          # Download kubectl
+          curl -Lo ./kubectl-binary https://storage.googleapis.com/kubernetes-release/release/v1.30.0/bin/linux/amd64/kubectl
+          chmod +x ./kubectl-binary
+          sudo mv ./kubectl-binary /usr/local/bin/kubectl
+
+          # Download kustomize
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"  | bash
+          sudo install -o root -g root -m 0755 kustomize /usr/local/bin/kustomize
+          kustomize version
+
+          # Download k6 CLI
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Set up multi-node KinD cluster
+        run: |
+          bash scripts/setup_kind_cluster.sh
+
+      - name: Deploy ingress controller
+        run: |
+          bash scripts/deploy_ingress.sh
+
+      - name: Deploy foo/bar echo services
+        run: |
+          bash scripts/deploy_echo_services.sh "$DEPLOY"
+
+      - name: Verify cluster health and routing
+        run: |
+          bash scripts/check_health.sh "$DEPLOY"
+
+      - name: Run validation on load test scripts
+        uses: grafana/run-k6-action@v1
+        with:
+          path: |
+            ./load_tests/testing_scripts/*_k6.js
+          fail-fast: true
+          only-verify-scripts: true
+
+      - name: Run ${{ env.TEST_TYPE }} test with k6
+        uses: grafana/run-k6-action@v1
+        with:
+          path: "load_tests/testing_scripts/${{ env.TEST_TYPE }}_test_k6.js"
+          fail-fast: true
+          flags: --summary-trend-stats avg,p(90),p(95),p(99)
+
+      - name: Upload all load test reports to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-load-test-reports
+          path: |
+            ${{ env.TEST_TYPE }}*.html
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Post load test results as PR comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pip install requests
+          python scripts/post_pr_comment.py --summary-file ${{ env.TEST_TYPE }}*.json 
